@@ -350,6 +350,83 @@ app.get('/api/stats', (req, res) => {
     }
 });
 
+// 🗑️ ENDPOINT ADMIN - Limpiar base de datos
+app.delete('/api/admin/clear-database', (req, res) => {
+    try {
+        const { confirm } = req.body;
+        
+        // Requerir confirmación explícita
+        if (confirm !== 'DELETE_ALL_DATA') {
+            return res.status(400).json({
+                error: 'Confirmación requerida',
+                message: 'Incluye "confirm": "DELETE_ALL_DATA" en el body para confirmar',
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        // Eliminar todas las ubicaciones
+        const deleteResult = db.prepare('DELETE FROM locations').run();
+        
+        // Resetear el autoincrement
+        db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run('locations');
+        
+        logMessage('WARNING', `Base de datos limpiada - ${deleteResult.changes} registros eliminados`);
+        
+        res.json({
+            status: 'success',
+            message: 'Base de datos limpiada correctamente',
+            deleted_records: deleteResult.changes,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        logMessage('ERROR', `Error limpiando base de datos: ${error.message}`);
+        res.status(500).json({
+            error: 'Error interno del servidor',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// 🗑️ ENDPOINT ADMIN - Eliminar datos por máquina
+app.delete('/api/admin/clear-machine/:machineName', (req, res) => {
+    try {
+        const { machineName } = req.params;
+        const { confirm } = req.body;
+        
+        // Requerir confirmación
+        if (confirm !== 'DELETE_MACHINE_DATA') {
+            return res.status(400).json({
+                error: 'Confirmación requerida',
+                message: 'Incluye "confirm": "DELETE_MACHINE_DATA" en el body para confirmar',
+                timestamp: new Date().toISOString()
+            });
+        }
+        
+        // Eliminar ubicaciones de la máquina específica
+        const deleteResult = db.prepare('DELETE FROM locations WHERE machine_name = ?').run(machineName);
+        
+        logMessage('WARNING', `Datos de máquina eliminados - ${machineName}: ${deleteResult.changes} registros`);
+        
+        res.json({
+            status: 'success',
+            message: `Datos de la máquina ${machineName} eliminados correctamente`,
+            machine_name: machineName,
+            deleted_records: deleteResult.changes,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        logMessage('ERROR', `Error eliminando datos de máquina: ${error.message}`);
+        res.status(500).json({
+            error: 'Error interno del servidor',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
 // 🏠 ENDPOINT - Página principal
 app.get('/', (req, res) => {
     const html = `
