@@ -350,6 +350,143 @@ app.get('/api/stats', (req, res) => {
     }
 });
 
+// 💾 ENDPOINT - Información detallada de base de datos
+app.get('/api/database/info', (req, res) => {
+    try {
+        const dbStats = fs.statSync(dbPath);
+        
+        // Obtener información de SQLite
+        const tableInfo = db.prepare("PRAGMA table_info(locations)").all();
+        const indexInfo = db.prepare("PRAGMA index_list(locations)").all();
+        const dbSize = db.prepare("PRAGMA page_count").get();
+        const pageSize = db.prepare("PRAGMA page_size").get();
+        
+        // Calcular estadísticas por día
+        const dailyStats = db.prepare(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as locations_count,
+                COUNT(DISTINCT machine_name) as machines_count
+            FROM locations 
+            WHERE created_at >= datetime('now', '-30 days')
+            GROUP BY DATE(created_at)
+            ORDER BY date DESC
+            LIMIT 30
+        `).all();
+        
+        // Estadísticas por máquina
+        const machineStats = db.prepare(`
+            SELECT 
+                machine_name,
+                COUNT(*) as total_locations,
+                MIN(created_at) as first_location,
+                MAX(created_at) as last_location,
+                ROUND(AVG(accuracy), 2) as avg_accuracy
+            FROM locations 
+            GROUP BY machine_name
+            ORDER BY total_locations DESC
+        `).all();
+        
+        const totalSize = dbStats.size;
+        const dbSizeCalculated = (dbSize.page_count * pageSize.page_size);
+        
+        res.json({
+            status: 'success',
+            database: {
+                file: {
+                    path: dbPath,
+                    size_bytes: totalSize,
+                    size_mb: (totalSize / (1024 * 1024)).toFixed(2),
+                    size_human: formatFileSize(totalSize),
+                    last_modified: dbStats.mtime,
+                    created: dbStats.birthtime
+                },
+                sqlite: {
+                    page_count: dbSize.page_count,
+                    page_size: pageSize.page_size,
+                    calculated_size_bytes: dbSizeCalculated,
+                    calculated_size_mb: (dbSizeCalculated / (1024 * 1024)).toFixed(2)
+                },
+                structure: {
+                    tables: ['locations'],
+                    columns: tableInfo.length,
+                    indexes: indexInfo.length,
+                    column_details: tableInfo
+                },
+                statistics: {
+                    daily_activity: dailyStats,
+                    machine_summary: machineStats,
+                    total_records: machineStats.reduce((sum, m) => sum + m.total_locations, 0)
+                }
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        logMessage('ERROR', `Error obteniendo info de base de datos: ${error.message}`);
+        res.status(500).json({
+            error: 'Error interno del servidor',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// 💽 ENDPOINT - Tamaño de base de datos (rápido)
+app.get('/api/database/size', (req, res) => {
+    try {
+        const dbStats = fs.statSync(dbPath);
+        
+        // Obtener información de páginas SQLite
+        const pageCount = db.prepare("PRAGMA page_count").get();
+        const pageSize = db.prepare("PRAGMA page_size").get();
+        const totalRecords = db.prepare("SELECT COUNT(*) as count FROM locations").get();
+        
+        // Calcular tamaños
+        const fileSizeBytes = dbStats.size;
+        const sqliteSizeBytes = pageCount.page_count * pageSize.page_size;
+        const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(2);
+        const sqliteSizeMB = (sqliteSizeBytes / (1024 * 1024)).toFixed(2);
+        
+        res.json({
+            status: 'success',
+            size: {
+                file: {
+                    bytes: fileSizeBytes,
+                    mb: fileSizeMB,
+                    human: formatFileSize(fileSizeBytes)
+                },
+                sqlite: {
+                    pages: pageCount.page_count,
+                    page_size: pageSize.page_size,
+                    bytes: sqliteSizeBytes,
+                    mb: sqliteSizeMB,
+                    human: formatFileSize(sqliteSizeBytes)
+                },
+                records: totalRecords.count,
+                avg_bytes_per_record: totalRecords.count > 0 ? Math.round(fileSizeBytes / totalRecords.count) : 0
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        logMessage('ERROR', `Error obteniendo tamaño de BD: ${error.message}`);
+        res.status(500).json({
+            error: 'Error interno del servidor',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Función para formatear tamaño de archivo
+function formatFileSize(bytes) {
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    if (bytes === 0) return '0 Bytes';
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+}
+
 // 🗑️ ENDPOINT ADMIN - Limpiar base de datos
 app.delete('/api/admin/clear-database', (req, res) => {
     try {
@@ -496,6 +633,20 @@ app.get('/', (req, res) => {
                 <strong>/api/stats</strong>
                 <p>Estadísticas generales del sistema y base de datos</p>
                 <a href="/api/stats" target="_blank">🔗 Ver estadísticas</a>
+            </div>
+
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <strong>/api/database/size</strong>
+                <p>Información rápida del tamaño de la base de datos SQLite</p>
+                <a href="/api/database/size" target="_blank">🔗 Ver tamaño de BD</a>
+            </div>
+
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <strong>/api/database/info</strong>
+                <p>Información detallada de la base de datos con estadísticas completas</p>
+                <a href="/api/database/info" target="_blank">🔗 Ver info completa de BD</a>
             </div>
             
             <h2>🔧 Configuración del Cliente</h2>
